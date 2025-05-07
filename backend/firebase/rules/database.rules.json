@@ -1,0 +1,42 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    
+    "stockPrices": {
+      ".read": "auth != null",
+      ".write": false,
+      "$symbol": {
+        ".read": "auth != null",
+        ".write": false
+      }
+    },
+    
+    "alerts": {
+      ".read": false,
+      ".write": false,
+      "$alertId": {
+        ".read": "auth != null && data.child('userId').val() === auth.uid",
+        ".write": "auth != null && (newData.child('userId').val() === auth.uid || data.child('userId').val() === auth.uid)"
+      }
+    },
+    
+    "notifications": {
+      ".read": false,
+      ".write": false,
+      "$userId": {
+        ".read": "auth != null && auth.uid === $userId",
+        ".write": "auth != null && auth.uid === $userId"
+      }
+    },
+    
+    "userStatus": {
+      ".read": "auth != null",
+      ".write": false,
+      "$userId": {
+        ".read": "auth != null",
+        ".write": "auth != null && auth.uid === $userId"
+      }
+    }
+  }
+}

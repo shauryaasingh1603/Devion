@@ -3,6 +3,7 @@ const cors = require('cors');
 const dotenv = require('dotenv');
 const { errorMiddleware, logger } = require('./utils/errorHandler');
 const insightsRoutes = require('./routes/insights.routes');
+const firebaseRoutes = require('./routes/firebase.routes');
 
 dotenv.config();
 
@@ -27,6 +28,7 @@ app.get('/api/health', (req, res) => {
 });
 
 app.use('/api/insights', insightsRoutes);
+app.use('/api/firebase', firebaseRoutes);
 
 app.use(errorMiddleware);
 
