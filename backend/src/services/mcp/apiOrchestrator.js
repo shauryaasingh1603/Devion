@@ -3,46 +3,71 @@
  * Manages API connections, retries, and fallbacks
  */
 
-const { ApiError, logApiError } = require('../../utils/errorHandler');
+const { logger, ApiError } = require('../../utils/errorHandler');
 const { normalizeStockData, normalizeNewsData } = require('../../utils/dataTransformer');
-const apiConfig = require('../../config/apis');
+
+const braveService = require('../api/brave.service');
+const kiteConnectService = require('../api/kiteconnect.service');
+const yahooFinanceService = require('../api/yahoofinance.service');
 
 /**
  * Fetch stock data with fallback mechanism
- * @param {string} symbol - Stock symbol
+ * @param {string|Array<string>} symbols - Stock symbol or array of symbols
  * @param {Object} options - Additional options
  * @returns {Promise<Object>} - Normalized stock data
  */
-const fetchStockData = async (symbol, options = {}) => {
+const fetchStockData = async (symbols, options = {}) => {
   try {
-    try {
-      const response = await apiConfig.kiteConnectApi.get(`/quote`, {
-        params: { symbols: symbol }
-      });
-      
-      if (response.data && response.data[symbol]) {
-        return normalizeStockData(response.data[symbol], 'kiteConnect');
-      }
-    } catch (error) {
-      logApiError(error, 'kiteConnect');
-    }
+    const symbolsArray = Array.isArray(symbols) ? symbols : [symbols];
+    
+    logger.info(`Fetching stock data for symbols: ${symbolsArray.join(', ')}`);
+    
+    let stockData = {};
+    let kiteConnectError = false;
     
     try {
-      const response = await apiConfig.yahooFinanceApi.get(`/v6/finance/quote`, {
-        params: { symbols: symbol }
-      });
+      stockData = await kiteConnectService.fetchStockData(symbolsArray);
       
-      if (response.data && response.data.quoteResponse && 
-          response.data.quoteResponse.result && 
-          response.data.quoteResponse.result.length > 0) {
-        return normalizeStockData(response.data.quoteResponse.result[0], 'yahooFinance');
+      const missingSymbols = symbolsArray.filter(symbol => !stockData[symbol]);
+      
+      if (missingSymbols.length > 0) {
+        logger.warn(`Missing data for symbols from Kite Connect: ${missingSymbols.join(', ')}`);
+        
+        const yahooData = await yahooFinanceService.fetchStockData(missingSymbols);
+        
+        stockData = { ...stockData, ...yahooData };
       }
     } catch (error) {
-      logApiError(error, 'yahooFinance');
-      throw new ApiError(`Failed to fetch stock data for ${symbol} from all sources`, 503, 'stockData');
+      logger.error(`Error fetching stock data from Kite Connect: ${error.message}`, {
+        stack: error.stack,
+        symbols: symbolsArray
+      });
+      
+      kiteConnectError = true;
+      
+      try {
+        stockData = await yahooFinanceService.fetchStockData(symbolsArray);
+      } catch (fallbackError) {
+        logger.error(`Error fetching stock data from Yahoo Finance: ${fallbackError.message}`, {
+          stack: fallbackError.stack,
+          symbols: symbolsArray
+        });
+        
+        throw new ApiError(`Failed to fetch stock data from all sources`, 503, 'stockData');
+      }
     }
     
-    throw new ApiError(`No data available for ${symbol}`, 404, 'stockData');
+    const finalMissingSymbols = symbolsArray.filter(symbol => !stockData[symbol]);
+    
+    if (finalMissingSymbols.length > 0) {
+      logger.warn(`No data available for symbols: ${finalMissingSymbols.join(', ')}`);
+    }
+    
+    if (!Array.isArray(symbols)) {
+      return stockData[symbols] || null;
+    }
+    
+    return stockData;
   } catch (error) {
     if (error instanceof ApiError) {
       throw error;
@@ -59,99 +84,225 @@ const fetchStockData = async (symbol, options = {}) => {
  */
 const fetchNewsData = async (query, options = {}) => {
   try {
-    const response = await apiConfig.braveApi.get(`/news/search`, {
-      params: {
-        q: query,
-        count: options.count || 10,
-        freshness: options.freshness || 'week'
-      }
-    });
+    logger.info(`Fetching news data for query: ${query}`);
     
-    if (response.data && response.data.articles) {
-      return normalizeNewsData(response.data.articles, 'brave');
-    }
+    const articles = await braveService.fetchNewsArticles(
+      query, 
+      options.limit || 10, 
+      options.timeframe || 'week'
+    );
     
-    return [];
+    return articles;
   } catch (error) {
-    logApiError(error, 'braveNews');
+    logger.error(`Error fetching news data: ${error.message}`, {
+      stack: error.stack,
+      query
+    });
     return [];
   }
 };
 
 /**
- * Fetch technical indicators for a stock
+ * Fetch sentiment data for a stock
+ * @param {string} symbol - Stock symbol
+ * @param {Object} options - Additional options
+ * @returns {Promise<Object>} - Sentiment data
+ */
+const fetchSentimentData = async (symbol, options = {}) => {
+  try {
+    logger.info(`Fetching sentiment data for symbol: ${symbol}`);
+    
+    const sentimentData = await braveService.fetchSentimentData(
+      symbol,
+      options.limit || 20
+    );
+    
+    return sentimentData;
+  } catch (error) {
+    logger.error(`Error fetching sentiment data: ${error.message}`, {
+      stack: error.stack,
+      symbol
+    });
+    
+    return {
+      symbol,
+      articles: [],
+      timestamp: Date.now()
+    };
+  }
+};
+
+/**
+ * Fetch technical indicators for a stock with fallback mechanism
  * @param {string} symbol - Stock symbol
  * @param {Object} options - Additional options
  * @returns {Promise<Object>} - Technical indicators
  */
 const fetchTechnicalIndicators = async (symbol, options = {}) => {
   try {
+    logger.info(`Fetching technical indicators for symbol: ${symbol}`);
+    
+    const indicators = options.indicators || ['rsi', 'macd', 'bollinger'];
+    
     try {
-      const response = await apiConfig.kiteConnectApi.get(`/indicators`, {
-        params: { 
-          symbol,
-          indicators: options.indicators || 'rsi,macd,sma,ema,bbands'
-        }
+      const technicalData = await kiteConnectService.fetchTechnicalIndicators(
+        symbol,
+        indicators,
+        options.interval || 'day',
+        options.period || 14
+      );
+      
+      return technicalData;
+    } catch (error) {
+      logger.error(`Error fetching technical indicators from Kite Connect: ${error.message}`, {
+        stack: error.stack,
+        symbol,
+        indicators
       });
       
-      if (response.data) {
-        return response.data;
+      try {
+        const technicalData = await yahooFinanceService.fetchTechnicalIndicators(
+          symbol,
+          indicators
+        );
+        
+        return technicalData;
+      } catch (fallbackError) {
+        logger.error(`Error fetching technical indicators from Yahoo Finance: ${fallbackError.message}`, {
+          stack: fallbackError.stack,
+          symbol,
+          indicators
+        });
+        
+        return {
+          symbol,
+          indicators: {},
+          timestamp: Date.now()
+        };
       }
-    } catch (error) {
-      logApiError(error, 'kiteConnectIndicators');
     }
+  } catch (error) {
+    logger.error(`Error fetching technical indicators: ${error.message}`, {
+      stack: error.stack,
+      symbol
+    });
     
     return {
-      rsi: null,
-      macd: null,
-      sma: null,
-      ema: null,
-      bbands: null
+      symbol,
+      indicators: {},
+      timestamp: Date.now()
     };
+  }
+};
+
+/**
+ * Fetch global market indices
+ * @returns {Promise<Array>} - Global market indices data
+ */
+const fetchGlobalIndices = async () => {
+  try {
+    logger.info('Fetching global market indices');
+    
+    const indices = await yahooFinanceService.fetchGlobalIndices();
+    
+    return indices;
   } catch (error) {
-    logApiError(error, 'technicalIndicators');
+    logger.error(`Error fetching global market indices: ${error.message}`, {
+      stack: error.stack
+    });
+    
+    return [];
+  }
+};
+
+/**
+ * Fetch currency exchange rates
+ * @param {Array<string>} currencies - Array of currency pairs
+ * @returns {Promise<Object>} - Currency exchange rates data
+ */
+const fetchCurrencyRates = async (currencies) => {
+  try {
+    logger.info('Fetching currency exchange rates');
+    
+    const rates = await yahooFinanceService.fetchCurrencyRates(currencies);
+    
+    return rates;
+  } catch (error) {
+    logger.error(`Error fetching currency exchange rates: ${error.message}`, {
+      stack: error.stack
+    });
+    
     return {};
   }
 };
 
 /**
- * Fetch institutional activity for a stock
- * @param {string} symbol - Stock symbol
- * @param {Object} options - Additional options
- * @returns {Promise<Object>} - Institutional activity data
+ * Fetch commodity prices
+ * @param {Array<string>} commodities - Array of commodity symbols
+ * @returns {Promise<Object>} - Commodity prices data
  */
-const fetchInstitutionalActivity = async (symbol, options = {}) => {
+const fetchCommodityPrices = async (commodities) => {
   try {
-    try {
-      const response = await apiConfig.kiteConnectApi.get(`/institutional-activity`, {
-        params: { 
-          symbol,
-          days: options.days || 7
-        }
-      });
-      
-      if (response.data) {
-        return response.data;
-      }
-    } catch (error) {
-      logApiError(error, 'kiteConnectInstitutional');
-    }
+    logger.info('Fetching commodity prices');
+    
+    const prices = await yahooFinanceService.fetchCommodityPrices(commodities);
+    
+    return prices;
+  } catch (error) {
+    logger.error(`Error fetching commodity prices: ${error.message}`, {
+      stack: error.stack
+    });
+    
+    return {};
+  }
+};
+
+/**
+ * Fetch comprehensive market data for risk analysis
+ * @param {Array<string>} symbols - Array of stock symbols
+ * @returns {Promise<Object>} - Comprehensive market data
+ */
+const fetchMarketData = async (symbols) => {
+  try {
+    logger.info(`Fetching comprehensive market data for symbols: ${symbols.join(', ')}`);
+    
+    const [stockData, globalIndices, currencyRates, commodityPrices] = await Promise.all([
+      fetchStockData(symbols),
+      fetchGlobalIndices(),
+      fetchCurrencyRates(),
+      fetchCommodityPrices()
+    ]);
     
     return {
-      netActivity: null,
-      buyVolume: null,
-      sellVolume: null,
-      history: []
+      stocks: stockData,
+      globalIndices,
+      currencies: currencyRates,
+      commodities: commodityPrices,
+      timestamp: Date.now()
     };
   } catch (error) {
-    logApiError(error, 'institutionalActivity');
-    return {};
+    logger.error(`Error fetching comprehensive market data: ${error.message}`, {
+      stack: error.stack,
+      symbols
+    });
+    
+    return {
+      stocks: {},
+      globalIndices: [],
+      currencies: {},
+      commodities: {},
+      timestamp: Date.now()
+    };
   }
 };
 
 module.exports = {
   fetchStockData,
   fetchNewsData,
+  fetchSentimentData,
   fetchTechnicalIndicators,
-  fetchInstitutionalActivity
+  fetchGlobalIndices,
+  fetchCurrencyRates,
+  fetchCommodityPrices,
+  fetchMarketData
 };
