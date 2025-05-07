@@ -21,7 +21,55 @@ export interface Stock {
   change?: number;
   changePercent?: number;
   value?: number;
+  investmentValue?: number;
   riskScore?: number;
+}
+
+export interface RiskFactor {
+  name: string;
+  description: string;
+  severity: number; // 0-100
+}
+
+export interface RiskAnalysis {
+  overallRiskScore: number; // 0-100
+  technicalRiskScore: number; // 0-100
+  sentimentRiskScore: number; // 0-100
+  marketRiskScore: number; // 0-100
+  riskFactors: RiskFactor[];
+  recommendations: string[];
+  timestamp: number;
+}
+
+export interface MarketIndex {
+  symbol: string;
+  name: string;
+  currentPrice: number;
+  change: number;
+  changePercent: number;
+}
+
+export interface Currency {
+  symbol: string;
+  name: string;
+  rate: number;
+  change: number;
+  changePercent: number;
+}
+
+export interface Commodity {
+  symbol: string;
+  name: string;
+  price: number;
+  change: number;
+  changePercent: number;
+}
+
+export interface MarketData {
+  indices: MarketIndex[];
+  currencies: Record<string, Currency>;
+  commodities: Record<string, Commodity>;
+  timestamp: number;
 }
 
 export interface Portfolio {
@@ -41,6 +89,9 @@ export interface Portfolio {
 interface PortfolioState {
   portfolios: Portfolio[];
   currentPortfolio: Portfolio | null;
+  portfolio: Portfolio | null; // For dashboard components
+  riskAnalysis: RiskAnalysis | null; // For risk analysis component
+  marketData: MarketData | null; // For market overview component
   loading: boolean;
   error: string | null;
 }
@@ -48,6 +99,9 @@ interface PortfolioState {
 const initialState: PortfolioState = {
   portfolios: [],
   currentPortfolio: null,
+  portfolio: null,
+  riskAnalysis: null,
+  marketData: null,
   loading: false,
   error: null
 };

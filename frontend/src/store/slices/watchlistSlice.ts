@@ -35,6 +35,7 @@ export interface Watchlist {
 interface WatchlistState {
   watchlists: Watchlist[];
   currentWatchlist: Watchlist | null;
+  watchlist: WatchlistStock[]; // Default watchlist for quick access
   loading: boolean;
   error: string | null;
 }
@@ -42,6 +43,7 @@ interface WatchlistState {
 const initialState: WatchlistState = {
   watchlists: [],
   currentWatchlist: null,
+  watchlist: [], // Initialize empty watchlist
   loading: false,
   error: null
 };
